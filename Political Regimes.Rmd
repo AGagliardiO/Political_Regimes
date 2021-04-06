@@ -1,0 +1,437 @@
+---
+title: Study of Relationship between economic outcomes and political regimes using machine
+ learning models
+author: "A Gagliardi"
+date: "March 2020 "
+output: "html_document"
+---
+# 1) Introduction
+
+There is the notion in political science and economics that democratic countries are in general more prosperous and economically stable than authoritarian ones. After all, most of the highest per capita income countries, like Norway, Denmark or Switzerland are long-established democracies, while many of the worst-performing ones, like Venezuela, North Korea or Zimbabwe are harsh dictatorships.
+
+This idea presents a kind of optimistic foresaw for the future. If free democracies are the ones who can achieve the highest levels of economic power, we can expect a more free and democratic international order in the coming decades. 
+
+However, since the break of the 2008 financial crisis, there have been serious doubts about the economic soundness of western democracies. Established developed democracies like Japan, Italy or France are starting to suffer from low productivity growth, economic stagnation, and rising public debt levels.
+
+On the other hand, many rising economic stars from Asia, like China or Singapore, have obtained high levels of economic growth by mixing economic liberalization policies with authoritarian political systems. Moreover, notorious emerging economies like India, Brasil or Turkey, considered for many as future powerhouses, are now being ruled by leaders with populist and authoritarian traits, even though they are supposed to be established democracies.
+
+This ambiguous relationship between economic success and sociopolitical freedom ought to be closely observed. In this research, we will use data science techniques and advanced machine learning algorithms to determine whether or not degrees of political freedom and macroeconomics outputs are correlated.
+
+To that purpose we compiled a pooled panel data, comparing the macroeconomic performance and political systems of several countries between 1980 and 1989, distinguishing between **Free**, **Non-Free** and **Partially-Free** countries for every year.
+
+One important limitation is the availability of the data. Not every macroeconomic statistic will be available for every country and every year, and most machine learning algorithms require a totally balanced dataset to properly work. Moreover, authoritarian or semi-authoritarian regimes are less prone to compile and publish relevant economic data, let alone reliable ones. In many cases, those have to be estimated by institutions like the IMF. As a consequence, the sample data could be biased, by having more data concerning free countries, compared to the other two types.
+
+The open-source statistical software R, along with a particular set of their packages,  will serve as the computational instrument. To make the work replicable, all the coding will be reflected in this document.
+
+```{r, include=FALSE, echo=FALSE}
+
+if (!require(tidyverse)) install.packages('tidyverse')
+library(tidyverse)  	
+if (!require(lubridate)) install.packages('lubridate')
+library(lubridate)
+if (!require(utils)) install.packages('utils')
+library(utils)
+if (!require(ggpubr)) install.packages('ggpubr')
+library(ggpubr)
+if (!require(stats)) install.packages('stats')
+library(stats)
+if (!require(stats4)) install.packages('stats4')
+library(stats4)
+if (!require(readxl)) install.packages('readxl')
+library(readxl)
+
+```
+# 2) Data Analysis
+
+## 2.1 ) Data compilation, cleaning, and consolidation
+
+The economic data will be extracted from the *World Economic Outlook* (WEO) database, of the International Monetary Fund (IMF). The dataset comprehends 30 economic indicators from 195 countries between 1980 and 2019.
+The political data would be taken from the *Freedom in the World* Report Historical Dataset, published by the NGO Freedom House. This dataset compiles the political profile of more than 200 countries around the world for every year since 1973, classifying them as Free (F), Non-Free (NF) or Partially Free (PF).
+```
+if (!require(readxl)) install.packages('readxl')
+library(readxl)
+url1 <- "https://freedomhouse.org/sites/default/files/Country_and_Territory_Ratings_and_Statuses_FIW1973-2019.xls"
+download.file(url1, "./Data_FHouse.xls", method = "curl")
+Data_FHouse <- read_excel("Data_FHouse.xls", sheet = "Country Ratings, Statuses ")
+url2 <- "https://www.imf.org/external/pubs/ft/weo/2019/02/weodata/WEOOct2019all.xls"
+download.file(url2, "./Data_IMF.xls", method = "curl")
+Data_IMF <- read.delim("./Data_IMF.xls")
+```
+Both datasets were downloaded directly from its source web pages in xls formats. They were subsequently cleaned to eliminate unnecessary columns and gathered into *tidy* format. Under this format, every individual data point has its own horizontal line in the dataset.
+
+```{r, warning=FALSE, include=FALSE}
+Data_FHouse <- read_excel("Data_FHouse.xls", sheet = "Country Ratings, Statuses ")
+Data_IMF <- read.delim("./Data_IMF.xls")
+Economic_Data <- Data_IMF %>%
+select(-WEO.Country.Code,-WEO.Subject.Code,-Subject.Notes,-Country.Series.specific.Notes,-Estimates.Start.After, - ISO) %>%
+gather("Year","Amount", - Country, - Subject.Descriptor, - Units, - Scale)
+Economic_Data$Year <- str_remove(Economic_Data$Year,"X")
+```
+
+The data from freedom house required a little more processing, given that the downloaded file was not optimized for data analysis purposes. Furthermore, in many years the timeframes of the data did not exactly coincide with the calendar years (i.e spanning from November of one year to November of the subsequent). In consequence, approximations had to be done in order to make the data workable.
+ 
+```{r, warning=FALSE}
+Political_Data <- Data_FHouse[c(-1,-2),]
+seq_data <- seq(1,139,3)
+Political_Data <- Political_Data[,seq_data]
+seq_years <- c(1, seq(2,137,3))
+years <- Data_FHouse[1,seq_years]
+colnames(Political_Data) <- years
+Political_Data <- Political_Data %>%
+rename("1984" = `Nov.1983-Nov.1984`, "1985" = `Nov.1984-Nov.1985`,
+   	"1986" = `Nov.1985-Nov.1986`,"1987" = `Nov.1986-Nov.1987`,
+   	"1988" = `Nov.1987-Nov.1988`, "1989" = `Nov.1988-Dec.1989`,
+   	"1983" = `Aug.1982-Nov.1983`, "Country" = `Year(s) Under Review`,
+   	"1981"= `Jan.1981-Aug. 1982`) %>%
+gather(key = "Year", value = "Grade", - Country)
+rm(seq_data,years)
+```
+
+Both datasets were consolidated into a single one, through a common variable called "unity", which combines the year and country of every individual data point (i.e Argentina 1998). The data was subsequently cleaned to remove missing data, blank spaces and to set the data points as a factor or numeric, depending on the case. 
+
+```{r, warning=FALSE}
+Economic_Data$Unity <- paste(Economic_Data$Country,Economic_Data$Year)
+Political_Data$Unity <- paste(Political_Data$Country,Political_Data$Year)
+Consolidated_Data <- left_join(Economic_Data,Political_Data, by = "Unity")
+ 
+Consolidated_Data$Amount <- str_remove(Consolidated_Data$Amount,"n/a")
+Consolidated_Data$Amount <- as.numeric(Consolidated_Data$Amount)
+Consolidated_Data$Grade <- str_remove(Consolidated_Data$Grade,"-")
+Consolidated_Data$Grade <- as.factor(Consolidated_Data$Grade)
+Consolidated_Data <- Consolidated_Data %>% dplyr::filter(Amount != "") %>%
+dplyr::filter(Grade != "") %>%
+select(-Year.y,-Country.y,-Scale,-Country.x,-Year.x)
+```
+Once the information is compiled and combined, it is ready to be analyzed.
+ 
+## 2.2) Data exploration
+### 2.2.1) Average Values
+ The next step is to determine which of the more than 30 variables contained in the IMF dataset could be useful to the model. As a first filtering criterion, there were taken out the indicators that come in absolute values, like the GDP of the population. Those indicators are highly dependent on the size of every country, hence they are not generally useful for comparison purposes. As a consequence, only relative indicators, expressed as a percentage of GDP or yearly rates of variation, will be considered.
+ 
+```{r}
+Consolidated_Data <-  Consolidated_Data  %>%
+dplyr::filter(Units %in% c("Percent of GDP","Percent change"))
+```
+
+The first analysis method will consist of taking the average value of every macroeconomic indicator, discriminating by the political regime. In theory, indicators showing the biggest variation between types of regimes are the ones that could help us to predict them. A new index called **MaxVar** was designed to show the percentage difference between the smaller and bigger average for every indicator among the three groups of countries.
+
+```{r, echo=TRUE,include=TRUE}
+Predictor_Analysis <-  Consolidated_Data %>%
+group_by(Subject.Descriptor,Grade) %>%
+summarize(Amount = mean(Amount)) %>%
+spread(key = Grade, value = Amount) %>%
+mutate("MaxVar" = (abs((max(F,NF,PF) - min(F,NF,PF))/min(F,NF,PF)*100)))  %>%
+arrange(desc(MaxVar))
+ 
+Predictor_Analysis
+```
+
+Based on the resulting table, some highlights can be observed. 
+* The **General Government primary lending/ borrowing**, also known as *primary budget balance* shows the highest MaxVar value. NF countries tend to show an average deficit of 3.66 percentage points (pp) of GDP, compared with the 0.26 pp of PF and 0.053 pp of NF. This indicator shows budget deficits, excluding interest payments. 
+* However, F countries show a higher rate of both **General government revenue** and **General government total expenditure** over GDP (35.5 pp and 37.7 pp, respectively), compared with NF and PF countries. The latter shows a lesser stream of revenues (25 and 23 pp, respectively) and expenditure ( 30 pp and 25 pp). Besides having more or less the same capacity to generate revenues, NF countries showed a higher average expenditure than PF, which explains its higher primary deficit.
+* As a result, **General Government net debts** are also higher in NF (45.5 pp of GDP) and PF countries (53.88 pp), than in F countries (37.9 pp). It is interesting how NF countries show higher levels of debt than NF, besides its lower primary deficits. This could be evidence that NF countries have in general less access to credit to cover their deficits.
+* Inflation measured as **Inflation, average consumer prices**, also shows interesting results. NF and PF countries tend to show average annual inflation of between 17 and 15 pp, significantly higher than the average of 8.7 pp presented by F countries. This is a result consistent with the higher budget deficit evidenced in previous sections. 
+
+* The **Current account balance** (an indicator showing the balance between entering and exiting streams of funds), also has relevant results. F countries tend to have an average deficit of 1.99 pp, compared with 2.5 of NF and 3.46 of PF. Just as in the case of net government debt, PF countries could have more access to foreign currency creditors than NF.
+Together, those 6 indicators give us a clear picture of the distinct behavior of three types of countries at study. At first, if the trends shown in the data are clear enough, a decision tree model could result as the most effective algorithm to apply.
+
+However, a sole analysis based on means may not offer a complete picture. If the dispersion of the indicators is high enough the difference in average values could end up being worthless. It is necessary to apply visualization techniques to gather a more clear picture.
+
+### 2.2.2) Graphical analysis
+
+### 2.2.2.1) Boxplot
+
+One of the most commonly used graphical analysis techniques to measure variability is the boxplot, also known as whisker and box graph. The upper and lower borders of every box mark the 75th and the 25th percentile of the variable, while the horizontal line inside the boxes marks the median or 50th percentile.  The points above and below the boxes are outlier values.
+
+As the first graphical approximation, we are going to apply a boxplot graph to the six variables previously selected, cutting out the most extreme observation to make the graphs readable.
+```{r, include=TRUE, echo= FALSE}
+Grid <- Consolidated_Data %>%
+  dplyr::filter(Subject.Descriptor %in% c("Current account balance",
+  "General government primary net lending/borrowing",
+  "Inflation, average consumer prices","General government net debt",
+  "General government revenue", "General government total expenditure")) %>%
+  ggplot(aes(Grade,Amount), col = Grade) +
+  geom_boxplot() + ylim(-10,50) + ylab("Percent Points") + xlab("Regime Type" ) +
+  facet_grid(. ~ Subject.Descriptor)
+Grid
+```
+ 
+Besides cutting off,It is interesting to see how many outliers data points stand out anyway. At first sight, macroeconomic indicators tend to be highly volatile, even though the differences between the types of regimes are still visible. The budget variables (Revenue, Expenditure, and deficit) are significantly more stables, containing a bigger proportion of observations inside their respective boxes.
+3.2.2.1) Scatter Plots
+Another popular way to graph variables is to scatter plots.
+ 
+```{r, echo=FALSE}
+Consolidated_Data_spread <- Consolidated_Data  %>%
+  dplyr::filter(Subject.Descriptor %in% c("Current account balance",
+  "General government primary net lending/borrowing",
+  "Inflation, average consumer prices","General government net debt",
+  "General government revenue", "General government total expenditure")) %>%
+select(Unity,Grade,Subject.Descriptor,Amount) %>%
+spread(key = Subject.Descriptor, value = Amount)
+```
+
+To ease the process of analysis without generating too many graphics, we are going to evaluate the variables by pairs, through bi-dimensional scatter plots.   The first graphs will compare the government's primary deficits and government debts, two highly connected indicators in theory.
+
+```{r, warning=FALSE, echo=FALSE}
+Scatter_Debt_Deficit <- Consolidated_Data_spread %>% ggplot(aes(x = `General government net debt`, y = `General government primary net lending/borrowing`, alpha = 0.1, colour = Grade)) + geom_point() +
+  xlim(-20,100) + ylim(-20,20)
+Scatter_Debt_Deficit
+```
+
+countries are less dispersed compared with the other two. 
+This graphic shows no apparent correlation between the two variables. The three types of political regimes spread evenly among both specters of debt and deficit. However, PF countries are apparently less spread than the other two. 
+```{r,warning=FALSE, echo=FALSE}
+Scatter_Revenue_Expenditure <- Consolidated_Data_spread %>% ggplot(aes(x = `General government revenue`, y = `General government total expenditure`, alpha = 0.1, colour = Grade)) + geom_point() +
+  xlim(-20,30) + ylim(-0,30)
+Scatter_Revenue_Expenditure
+```
+ 
+A second scatter graph compares the revenues and expenditures of every country. In this case, a positive correlation between the variables is clear, as could be expected. It is also visible how the F countries tend to higher levels of both revenues and expenditures, followed by the PF, and lastly the NF.
+However, there is a significant amount of juxtaposition between the three. NF countries, in particular, are spread around all the spectrum.
+
+```{r,warning=FALSE, echo=FALSE}
+Scatter_CA_Inflation <- Consolidated_Data_spread %>% ggplot(aes(x = `Current account balance`, y = `Inflation, average consumer prices`, alpha = 0.1, colour = Grade)) + geom_point() +
+xlim(-20,20) + ylim(-0,20)
+Scatter_CA_Inflation
+```
+ 
+ 
+The last comparison, one between the inflation and current account balance, confirms what could be seen in the boxplot graphs. Both indicators are too volatile to show a clear picture. However, some tenuous trends could be observed. Most of the countries tend to have a moderate current account deficit, but F countries are in general more centered on the equilibrium. PF countries have in general worse results in both inflation and current accounts than free ones, while NF countries are more dispersed across both spectrums.
+After all the graphical analysis some conclusion could be extracted:
+·         Free countries have in general better macroeconomics results than the Free and Partially Free countries.  The latter two are more difficult to differentiate.
+·         Budget related indicators (revenue, expenditure, and deficits) are the more useful ones. Their results are less volatile, and the differences between all three types of countries are clearer.
+·         Inflation and current account deficits are too volatile to be particularly useful, even though they have to be taken into consideration anyway. 
+·         Debt levels are in general more stables, but the differences in the behavior are not that clear.
+# 3) Machine Learning Modeling
+
+After proceeding with the graphical analysis we can obtain the final dataset. We will call it *Reduced Dataset*. This dataset preserves only the rows (country-year) containing all the selected variables. To get a balanced dataset if a single indicator (i.e inflation) is not available the entire row is discarded. The price to pay is that, as a consequence, the final dataset is significantly smaller than the previously studied, and many of their statistical properties may end up being modified.
+
+```{r}
+Reduced_Data <- Consolidated_Data_spread %>%
+rename("Exterior" = `Current account balance`, "Inflation" = `Inflation, average consumer prices`,
+   	"Debt" = `General government net debt`, "Deficit" = `General government primary net lending/borrowing`,
+   	"Revenue" = `General government revenue`, "Expenditure" = `General government total expenditure`) %>%
+drop_na("Exterior","Debt","Deficit") %>% select(-Unity) %>% dplyr::filter(Grade != "")
+Reduced_Data$Grade <- as.factor(as.character(Reduced_Data$Grade))
+```
+Now that the data final dataset is compiled, it is time to find out which machine learning (ML) model has a better performance at predicting the outcome variable. ML algorithms have the distinct ability to train themselves. They can detect patterns in the data, and automatically create models based on those patterns, with little or none human intervention.
+Before running any kind of procedure concerning ML, the first step is to split the data between a *training set* (the one used to develop the algorithms) and a *test set* (the one used to test the performance of the algorithm). In this case, the train set will comprehend 80% of the *Reduced_Data* dataset proportion, and the remaining 20% will go to the test set.
+```{r}
+if (!require(caret)) install.packages('caret')
+library(caret)
+```
+
+```{r}
+set.seed(1)
+test_index <- createDataPartition(Reduced_Data$Grade,times = 1, p = 0.2, list = FALSE)
+train_set <- Reduced_Data[-test_index,]
+test_set <- Reduced_Data[test_index,]
+```
+
+Among all the machine learning models available, three widely proven ones have been selected for the task: the **Classification Tree**, the **k-nearest neighbors** and the **random forest**. We will see how well each of them can carry out the task.
+To execute those models, we will be using an R package called "caret". This package is designed to automatically apply a wide variety of ML algorithms over a dataset, creating models of predictions for any selected variable.
+
+## 3.1) Classification tree
+
+The classification tree is one of the most popular ML models. It consists of a mapping of binary decisions, leading to determining the "class" of a certain object. Every "branch" of the tree raises a question about a particular characteristic of the object, and the "leaves" are two possible binary answers to that question. Every answer should lead to a new question being raised until enough questions are answered and it's possible to determine the true class of the object.
+The "train" function of the caret package can automatically create a predictive model for every ML algorithm selected, based on the training dataset. The classification tree model 
+
+```{r}
+if (!require(rpart)) install.packages('rpart')
+library(rpart)
+set.seed(1)
+train_rpart   <-  train(Grade ~ .,data = train_set, method = "rpart")
+```
+
+Besides its autonomous nature, every ML algorithm has one or more parameters that should be optimized or "tuned" to obtain the best results. Fortunately, the train function of the package automatically optimizes the algorithm through a process called cross-validation. There is a default range of different values for the tunable parameter in every algorithm, and the package automatically chooses the value that shows the best accuracy
+In this case, the parameter to be tuned is the *cp*, or *complexity parameter*. This parameter sets the minimal predictive improvement necessary to create a new branch in the tree. The default range for it is between 0.040 and 0.070. 
+However, sometimes the best possible tuning value for a particular parameter may be outside the default range. As a consequence, It's necessary to check if the best performance tuning value of a parameter is at the extremes of the default range, which could be a sign of the existence of a better tuning value outside the range.
+By plotting the output object resulting from every round of training, we can see the accuracy level from every level of the tuning parameter.
+
+```{r}
+plot(train_rpart)
+```
+  
+In the case of our own regression, it is remarkable that the minimum value in the cp default range (0.040) is the one showing the best accuracy (0.685). It's possible that an even smaller cp value could result in an even better accuracy score. To evaluate this, we proceeded to repeat the training process, but changing the so-called *tune grid* parameter to evaluate the performance of values lower than 
+0.0. 
+```{r}
+set.seed(1)
+train_rpart_tuned   <-  train(Grade ~ .,data = train_set, method = "rpart", 
+                              tuneGrid = data.frame(cp = seq(0.001, 0.01, 0.001)))
+plot(train_rpart_tuned)
+```
+ 
+The new training round shows significantly better accuracy (0.724) coming from a considerably lower cp value (0.006). This is the configuration we'll now use through the test dataset.
+
+```{r, warning = FALSE, include = FALSE}
+
+if (!require(grid)) install.packages('grid')
+library(grid)
+if (!require(gridExtra)) install.packages('gridextra')
+library(gridExtra)
+```
+
+
+```{r}
+predict_rpart <-  predict(train_rpart_tuned, test_set, type = "raw" )
+Results_rpart <-  confusionMatrix(predict_rpart,test_set$Grade)
+Overall_rpart <-  Results_rpart$overall[["Accuracy"]]
+Table_rpart   <-  Results_rpart$table
+Overall_rpart
+```
+
+In the end, the overall accuracy of this free test was 0.72602. A little more than double the expected level of accuracy of pure chance in a situation of three possible outputs. It's the first benchmark to compare against the other models.
+
+```{r, message=FALSE, warning=FALSE}
+
+grid.arrange(grobs = list(tableGrob(round(Results_rpart$table, digits = 3))), top = "Clasification Tree Confusion Matrix")
+```
+
+
+The adjacent table is the *Confusion Matrix*. It tabulates every combination of prediction (vertical axis) and the actual value (horizontal axis). For instance, the three numbers of the first column (204, 16 and 19) indicate that of the 239 cases classified as Free in the original dataset, the model predicted as such a total of 204, while 16 cases were (wrongly) predicted as Non - Free and 19 as Partially Free.
+Those numbers mean that the *sensitivity* of the model is 85.35% (204/239) for free countries. The sensitivity indicates the proportion of individuals in class A is actually predicted as A by the model.
+
+On the flip side, the first row of the table indicates a total of 16 NF cases and 31 PF cases (wrongly) predicted as F by the model. In this case, the relevant indicator is the *specificity*, or the capacity of the model to **not** predict as class A an individual that does not belong to the class A. It is measured as the ratio between the number of cases rightly predicted as negatives (true negatives) and the sum of those true negatives and the false positives. In this case, the specificity for F countries is just 0.6269. 
+
+```{r}
+confusion_rpart <- Results_rpart$byClass[,c("Sensitivity","Specificity","Balanced Accuracy")]
+grid.arrange(grobs =list(tableGrob(round(confusion_rpart, digits = 3))))
+```
+
+
+This first model clearly shows a bias towards predicting Free countries, probably motivated by the high proportion of free countries in the sample.  Only half of the Non-Free are Partially-Free cases are predicted as such. 
+However,  one of the main advantages of the classification tree method is its high interpretability. It's possible to reflect the actual logical process of selection in a treemap, which makes it possible to gather some highlights.
+
+```{r}
+set.seed(1)
+fit_rpart <- rpart(Grade ~ ., data = train_set)
+plot(fit_rpart, margin = 0.1)
+text(fit_rpart, cex = 0.55)
+
+```
+
+## 3.2) Random Forest
+
+Another frequently used algorithm is the so-called *Random Forest*. This algorithm creates a multitude of classification trees (a "forest") and ensembles their results into a single classification model. It holds several advantages over the single tree model; among them are lower variance and more consistent results, at the expense of some loss interpretability and longer calculation times.
+
+Like the previous method, the Random Forest can be applied and trained by the caret package, under the algorithm "rf", but has to pass through the same verification of tuning variables.  In this case, the tuning variable is the number of variables randomly sampled as candidates at each split, called mtry.
+
+```{r}
+set.seed(1)
+train_rf   <-  train(Grade ~ ., data = train_set, method = "rf")
+plot(train_rf)
+```
+ 
+A first look at the trained model shows us maximization of performance at a low level of the predictor (2), which suggests the chance of a better performance by picking a single predictor. A new training round will be held just taking the values between 1 and 3 for the tuning variable.
+```{r}
+set.seed(1)
+train_rf_tuned   <- train(Grade ~ ., data = train_set, method = "rf", tuneGrid = data.frame(mtry = seq(1, 3, 1)))
+plot(train_rf_tuned)
+```
+ 
+```{r}
+predict_rf <-  predict(train_rf_tuned, test_set, type = "raw" )
+Results_rf <- confusionMatrix(predict_rf,test_set$Grade)
+Table_rf   <-  Results_rf$table
+Results_rf$overall[["Accuracy"]]
+```
+ 
+The Random Forest model shows an important improvement over the previous method. The 0.72 accuracies climbed to 0.80. 
+
+
+
+```{r}
+confusion_rf <- Results_rf$byClass[,c("Sensitivity","Specificity","Balanced Accuracy")]
+Table_rf <- grid.arrange(grobs = list(tableGrob(Results_rf$table)))
+Derivatives_rf <- grid.arrange( grobs = list(tableGrob(round(confusion_rf, digits = 3))))
+grid.arrange(grobs = list(Table_rf,Derivatives_rf), top = "Random Forest Confusion Matrix")
+```
+                 
+                 
+                 
+
+## 3.3) K- Nearest Neighbor (KNN)
+
+Another very popular ML model is the K - Nearest Neighbor (kNN). This 
+ 
+(Descripción del algoritmo kNN)
+ 
+
+```{r}
+set.seed(1)
+train_knn <- train( Grade ~ ., data = train_set, method = "knn")
+plot(train_knn)
+``` 
+Just as in the previous models, the preliminary results indicate better performance for the model at the lowest tuning values. Therefore, a new train round would have to be executed. 
+
+
+```{r}
+set.seed(1)
+train_knn_tuned  <- train( Grade ~ ., data = train_set, 
+                           method = "knn",tuneGrid = data.frame(k = seq(1, 10, 2)))
+plot(train_knn_tuned)
+``` 
+The round of training indicate  
+
+
+```{r}
+predict_knn <-  predict(train_knn_tuned, test_set, type = "raw" )
+Results_knn <-  confusionMatrix(predict_knn,test_set$Grade)
+print(Results_knn)
+Table_knn   <-  Results_knn$table
+Results_knn$overall[["Accuracy"]]
+```
+
+```{r}
+confusion_knn <- Results_knn$byClass[,c("Sensitivity","Specificity","Balanced Accuracy")]
+Table_knn <- grid.arrange(grobs = list(tableGrob(Results_knn$table)))
+Derivatives_knn <- grid.arrange( grobs = list(tableGrob(round(confusion_knn, digits = 3))))
+grid.arrange(grobs = list(Table_knn,Derivatives_knn), top = "kNN Confusion Matrix")
+```
+
+These knn results are very similar to the random forest one. PF sensitivity climbs to 0.64
+
+
+
+
+
+
+## 4.4) Effective relevance of variables
+Once the models are set, there is some new information that can be extracted from the trained algorithm. One example is to measure the relevance of each variable in every model. The caret function *VarImp* allows us to find out.   
+```{r}
+var_rpart <- plot(varImp(train_rpart_tuned))
+var_knn   <- plot(varImp(train_knn_tuned))
+var_rf    <- plot(varImp(train_rf_tuned))
+Variable_chart <- ggarrange(var_rpart,var_rf,var_knn, labels = c("Clasification Tree","Random Forest","kNN"), hjust = -0.5)
+annotate_figure(Variable_chart, top = text_grob("Relative Importance of variables, by ML model", size = 14))
+```
+ 
+
+
+After measuring the variable importance in every of the three models, some conclusions could :
+
+
+.	Expenditures and Revenues are the most important and consistent variables in the model. 
+
+.	Fiscal Balance and Inflation are the three least 
+
+
+
+
+# 5) Conclusion
+
+This work is a first approach to a topic that is both theoretically and technically quite complex, with somehow mixed results. The best overall accuracies could barely pass the 80% threshold. It's not a bad result, considering that, with three output categories, the guessing rate approximately 33%. But they are still far from being reliable models.
+Nevertheless, some important key conclusions could be extracted from the whole analysis process: 
+.	In general, free countries showed a better economic performance and a most consistent behavior than the non - free or semi - free countries, even though all categories demonstrated high variability in their results. The idea that democracies have better economic performance still holds.  
+
+.	The proportion of government's revenues and expenditures are clearly the best indicators to predict the degree of freedom of a society. Free countries tend to have higher rates of both indicators over GDP, suggesting that the citizens of these countries are more willing to pay taxes, and the government more interest in interest in provide  public goods and services. 
+
+.	Current account balances also showed some relevance, even though way lower that the previously mentioned variables.   
+
+.	On the other hand, inflation, fiscal deficits and debt levels demonstrated to have very weak predictive measures in practice. 
+
+.	
+
+For instance, a different selection of variables could lead to different sample of data. There is a wide range of other ML algorithms to apply; now we just use three of them. 
+
+
